@@ -9,7 +9,7 @@ pd.set_option("display.max_columns", None)
 pd.set_option("display.width", None)
 pd.set_option("display.max_colwidth", None)
 
-df_players = pd.read_csv("data/players.csv")
+df_players = pd.read_csv("data/players.csv", index_col="player_id")
 
 def build_transition_graph(df):
     """

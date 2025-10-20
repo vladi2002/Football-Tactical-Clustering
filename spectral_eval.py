@@ -23,6 +23,167 @@ zt = ZoneTransformer()
 # 1. DATA PREPARATION
 # ========================================
 
+def load_team_graphs(team_name, match_ids=None, time_window=None, scan_range=None):
+    """
+    Load graphs for a SPECIFIC TEAM across multiple matches.
+    
+    This ensures:
+    - All graphs are from the same team's perspective
+    - Orientation is consistent (team always attacks in same direction)
+    - Suitable for tactical consistency analysis
+    
+    Args:
+        team_name: Team name to track (e.g., "France", "Spain")
+        match_ids: Specific match IDs, or None to scan
+        time_window: None (full match) or int (minutes per window)
+        scan_range: Range of match IDs to scan if match_ids=None
+    
+    Returns:
+        List of (graph, metadata) tuples for this team only
+    """
+    
+    zt = ZoneTransformer()
+    INCLUDE_EVENTS = ["PASS", "SHOT", "DUEL", "GOALKEEPER"]
+    
+    graphs = []
+    target_team_id = None
+    
+    # Find team ID if scanning
+    if match_ids is None:
+        if scan_range is None:
+            scan_range = range(2058000, 2058050)
+        print(f"Scanning for team '{team_name}'...")
+        match_ids = []
+        
+        for mid in scan_range:
+            try:
+                data = wyscout.load_open_data(mid)
+                home_team, away_team = data.metadata.teams
+                
+                if team_name.lower() in home_team.name.lower():
+                    match_ids.append(mid)
+                    if target_team_id is None:
+                        target_team_id = int(home_team.team_id)
+                    print(f"  ✓ Found {team_name} in match {mid} (home)")
+                    
+                elif team_name.lower() in away_team.name.lower():
+                    match_ids.append(mid)
+                    if target_team_id is None:
+                        target_team_id = int(away_team.team_id)
+                    print(f"  ✓ Found {team_name} in match {mid} (away)")
+                    
+            except Exception:
+                continue
+        
+        print(f"\n✅ Found {len(match_ids)} matches for {team_name}")
+    
+    # Load graphs for this team
+    for match_id in match_ids:
+        print(f"\nProcessing match {match_id}...")
+        
+        try:
+            # Load match data
+            data = wyscout.load_open_data(match_id)
+            home_team, away_team = data.metadata.teams
+            
+            # Find our target team
+            if team_name.lower() in home_team.name.lower():
+                team_id = int(home_team.team_id)
+                team_obj = home_team
+                is_home = True
+            elif team_name.lower() in away_team.name.lower():
+                team_id = int(away_team.team_id)
+                team_obj = away_team
+                is_home = False
+            else:
+                print(f"  ⚠️  Team '{team_name}' not in this match, skipping")
+                continue
+            
+            if target_team_id is None:
+                target_team_id = team_id
+            
+            # CRITICAL: Transform to ACTION_EXECUTING_TEAM orientation
+            # This ensures our team always attacks in the same direction
+            data = data.transform(Orientation.ACTION_EXECUTING_TEAM)
+            
+            # Convert to DataFrame and transform zones
+            df_raw = data.to_df(*zt.INCLUDE_COLS, engine="pandas")
+            df_raw.set_index("event_id", inplace=True)
+            df_raw = zt.transform(df_raw)
+            
+            # Filter to relevant events
+            df = df_raw[df_raw["event_type"].isin(INCLUDE_EVENTS)]
+            
+            # Filter to OUR TEAM ONLY
+            df_team = df[df["team_id"] == team_id]
+            
+            if len(df_team) < 10:
+                print(f"  ⚠️  Too few events ({len(df_team)}), skipping")
+                continue
+            
+            if time_window is None:
+                # Full match graph
+                G = build_transition_graph(df_team)
+                graphs.append((G, {
+                    'match_id': match_id,
+                    'team_id': team_id,
+                    'team_name': team_obj.name,
+                    'is_home': is_home,
+                    'time_window': 'full',
+                    'num_events': len(df_team)
+                }))
+                print(f"  ✓ Built graph: {len(df_team)} events, "
+                      f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+            else:
+                # Time-windowed graphs
+                max_time = df_team['timestamp'].max()
+                window_count = 0
+                
+                for t_start in range(0, int(max_time), time_window * 60):
+                    t_end = t_start + time_window * 60
+                    df_window = df_team[(df_team['timestamp'] >= t_start) & 
+                                       (df_team['timestamp'] < t_end)]
+                    
+                    if len(df_window) < 5:
+                        continue
+                    
+                    G = build_transition_graph(df_window)
+                    graphs.append((G, {
+                        'match_id': match_id,
+                        'team_id': team_id,
+                        'team_name': team_obj.name,
+                        'is_home': is_home,
+                        'time_window': f"{t_start//60}-{t_end//60}min",
+                        'num_events': len(df_window)
+                    }))
+                    window_count += 1
+                
+                print(f"  ✓ Built {window_count} time windows")
+        
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
+            continue
+    
+    print(f"\n{'='*80}")
+    print(f"SUMMARY: Loaded {len(graphs)} graphs for {team_name}")
+    print(f"{'='*80}")
+    
+    # Print breakdown
+    if time_window:
+        matches = set(m['match_id'] for _, m in graphs)
+        print(f"  • Matches: {len(matches)}")
+        print(f"  • Time windows per match: ~{len(graphs) / len(matches):.1f}")
+    else:
+        print(f"  • Matches: {len(graphs)}")
+    
+    total_events = sum(m['num_events'] for _, m in graphs)
+    print(f"  • Total events: {total_events}")
+    print(f"  • Team ID: {target_team_id}")
+    
+    return graphs
+
+
+
 def load_match_graphs(match_ids, team_filter='both', time_window=None):
     """
     Load multiple matches and build graphs.
@@ -417,6 +578,135 @@ def experiment_4_pattern_interpretation(graphs, k=5, num_examples=3):
         visualize_patterns_on_pitch(G, labels, nodes)
 
 
+def run_team_consistency_test(team_name, match_ids=None, k=5, time_window=None):
+    """
+    One-line function to test tactical consistency for a specific team.
+    
+    Args:
+        team_name: Team to analyze (e.g., "France")
+        match_ids: Specific matches, or None to auto-find
+        k: Number of patterns
+        time_window: None or minutes (e.g., 10 for 10-min windows)
+    
+    Returns:
+        results dict with patterns and consistency scores
+    """
+    
+    print("="*80)
+    print(f"TACTICAL CONSISTENCY TEST: {team_name}")
+    print("="*80)
+    
+    # Load team graphs
+    graphs = load_team_graphs(team_name, match_ids=match_ids, time_window=time_window)
+    
+    if len(graphs) < 2:
+        print(f"\n❌ Need at least 2 graphs for consistency testing")
+        print(f"   Found only {len(graphs)} graph(s)")
+        print(f"\n💡 Solutions:")
+        print(f"   1. Use time windows: time_window=10")
+        print(f"   2. Provide more match_ids")
+        return None
+    
+    # Discover patterns for each graph
+    print(f"\n{'='*80}")
+    print("DISCOVERING PATTERNS")
+    print(f"{'='*80}")
+    
+    all_patterns = []
+    for i, (G, metadata) in enumerate(graphs):
+        print(f"\n[{i+1}/{len(graphs)}] Match {metadata['match_id']}, "
+              f"{metadata['time_window']}: {metadata['num_events']} events")
+        
+        labels, nodes = discover_tactical_patterns(G, k=k)
+        all_patterns.append((G, labels, nodes, metadata))
+    
+    # Compute consistency (ARI between all pairs)
+    print(f"\n{'='*80}")
+    print("COMPUTING CONSISTENCY")
+    print(f"{'='*80}")
+    
+    from sklearn.metrics import adjusted_rand_score
+    
+    ari_scores = []
+    comparisons = []
+    
+    for i in range(len(all_patterns)):
+        for j in range(i+1, len(all_patterns)):
+            G_i, labels_i, nodes_i, meta_i = all_patterns[i]
+            G_j, labels_j, nodes_j, meta_j = all_patterns[j]
+            
+            # Find common zones
+            common_nodes = list(set(nodes_i) & set(nodes_j))
+            
+            if len(common_nodes) < 5:
+                continue
+            
+            # Extract labels for common zones
+            idx_i = [nodes_i.index(n) for n in common_nodes]
+            idx_j = [nodes_j.index(n) for n in common_nodes]
+            common_labels_i = [labels_i[idx] for idx in idx_i]
+            common_labels_j = [labels_j[idx] for idx in idx_j]
+            
+            ari = adjusted_rand_score(common_labels_i, common_labels_j)
+            ari_scores.append(ari)
+            
+            comparisons.append({
+                'match_i': meta_i['match_id'],
+                'window_i': meta_i['time_window'],
+                'match_j': meta_j['match_id'],
+                'window_j': meta_j['time_window'],
+                'ari': ari,
+                'common_zones': len(common_nodes)
+            })
+    
+    if not ari_scores:
+        print("❌ Could not compute any ARI scores (insufficient zone overlap)")
+        return None
+    
+    # Results
+    mean_ari = np.mean(ari_scores)
+    std_ari = np.std(ari_scores)
+    
+    print(f"\n{'='*80}")
+    print(f"CONSISTENCY RESULTS: {team_name}")
+    print(f"{'='*80}")
+    print(f"\nGraphs analyzed: {len(graphs)}")
+    print(f"Pairwise comparisons: {len(ari_scores)}")
+    print(f"\nAdjusted Rand Index (ARI):")
+    print(f"  • Mean: {mean_ari:.3f}")
+    print(f"  • Std:  {std_ari:.3f}")
+    print(f"  • Min:  {np.min(ari_scores):.3f}")
+    print(f"  • Max:  {np.max(ari_scores):.3f}")
+    
+    print(f"\nInterpretation:")
+    if mean_ari > 0.5:
+        print(f"  ✅ HIGHLY CONSISTENT - {team_name} uses similar tactical patterns")
+    elif mean_ari > 0.3:
+        print(f"  ⚠️  MODERATELY CONSISTENT - Some tactical variation")
+    else:
+        print(f"  ❌ INCONSISTENT - High tactical variability")
+    
+    # Show example patterns from first graph
+    print(f"\n{'='*80}")
+    print(f"EXAMPLE PATTERNS (First Graph)")
+    print(f"{'='*80}")
+    
+    G_first, labels_first, nodes_first, meta_first = all_patterns[0]
+    print(f"\nMatch {meta_first['match_id']}, {meta_first['time_window']}")
+    interpret_tactical_patterns(G_first, labels_first, nodes_first, k=k)
+    
+    return {
+        'team_name': team_name,
+        'graphs': graphs,
+        'patterns': all_patterns,
+        'mean_ari': mean_ari,
+        'std_ari': std_ari,
+        'ari_scores': ari_scores,
+        'comparisons': comparisons
+    }
+
+
+
 # ========================================
 # 4. MAIN TESTING PIPELINE
 # ========================================
@@ -506,3 +796,39 @@ def run_full_test_suite(match_ids=None, k=5):
     
 #     ========================================================================
 #     """)
+
+
+# ========================================
+# EASY USAGE EXAMPLES
+# ========================================
+
+# if _name_ == "_main_":
+    
+#     print("""
+#     ====================================================================
+#     TEAM-SPECIFIC CONSISTENCY TESTING
+#     ====================================================================
+    
+#     Example 1: Test France across multiple matches (auto-find)
+#         results = run_team_consistency_test("France", k=5)
+    
+#     Example 2: Test France with time windows (works with 1 match!)
+#         results = run_team_consistency_test("France", 
+#                                             match_ids=[2058017], 
+#                                             time_window=10,
+#                                             k=5)
+    
+#     Example 3: Test specific team with specific matches
+#         results = run_team_consistency_test("Spain",
+#                                             match_ids=[2058017, 2058019],
+#                                             k=5)
+    
+#     ====================================================================
+#     """)
+    
+#     # Quick test with France
+#     print("\nRunning example: France with 10-min time windows\n")
+#     results = run_team_consistency_test("France", 
+#                                        match_ids=[2058017], 
+#                                        time_window=10,
+#                                        k=5)
