@@ -14,8 +14,8 @@ ENV/
 *.ipynb_checkpoints
 
 # Pickle files
-*.pkl
-*.pickle
+# *.pkl
+# *.pickle
 
 # HDF5 files
 *.h5
