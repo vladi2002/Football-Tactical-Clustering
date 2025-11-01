@@ -1,0 +1,22 @@
+Average IG fidelity for team 1609: 0.771499311797762
+Average IG mask entropy for team 1609: 0.7589247822761536
+Average GNNExplainer fidelity for team 1609: 0.8452736245811378
+Average GNNExplainer mask entropy for team 1609: 3.8775975704193115
+
+Average IG fidelity for team 1612: 0.8122245100301665
+Average IG mask entropy for team 1612: 0.34635570645332336
+Average GNNExplainer fidelity for team 1612: 0.8539131449686514
+Average GNNExplainer mask entropy for team 1612: 3.7676751613616943
+
+Average IG fidelity for team 1625: 0.8870569270708271
+Average IG mask entropy for team 1625: 0.42349809408187866
+Average GNNExplainer fidelity for team 1625: 0.8977416945243808
+Average GNNExplainer mask entropy for team 1625: 3.948213577270508
+
+---
+
+Average IG fidelity: 0.8231284555451046
+Average IG mask entropy: 0.511819
+
+Average GNN fidelity: 0.8654609535296913
+Average GNN mask entropy: 3.8646123

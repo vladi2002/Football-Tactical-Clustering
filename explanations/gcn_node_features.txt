@@ -1,0 +1,2 @@
+Fidelity: 0.4487340723550714
+Mask entropy: 2.527618

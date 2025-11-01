@@ -1,0 +1,14 @@
+Top influential features:
+Feature 0: 124.2066
+Feature 6: 21.8177
+Feature 3: 3.9392
+Feature 5: 3.3168
+Feature 9: 2.3103
+Feature 8: 1.7980
+Feature 1: 1.5375
+Feature 10: 1.2620
+Feature 7: 0.5709
+Feature 4: 0.2279
+
+Mean fidelity: 0.9179
+Mean entropy:  0.8646
